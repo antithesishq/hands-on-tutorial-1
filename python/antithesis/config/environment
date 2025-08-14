@@ -1,0 +1,10 @@
+# This environment file is loaded during docker-compose `up` and `down`.
+# Be aware that variables declared here are NOT forwarded to containers.
+# To forward them to containers, use an explicit `environment` set inside
+# individual services blocks.
+
+# Port number the server listens to
+PORT_NUMBER=4444
+
+# N.B. When building and publishing images via GH Workflow, values for the
+# IMAGES_PREFIX and IMAGES_TAG variables are appended below.

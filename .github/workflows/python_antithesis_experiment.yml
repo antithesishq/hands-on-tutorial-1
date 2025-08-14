@@ -1,0 +1,66 @@
+name: Antithesis - Python Echo Server
+
+env:
+  WEBHOOK_CREDENTIALS: ${{ secrets.ANTITHESIS_USER_NAME }}:${{ secrets.ANTITHESIS_PASSWORD }}
+  REGISTRY: us-central1-docker.pkg.dev
+  REPOSITORY: us-central1-docker.pkg.dev/molten-verve-216720/${{ vars.ANTITHESIS_REPOSITORY_NAME }}-repository
+  TENANT_DOMAIN: ${{ vars.ANTITHESIS_TENANT_DOMAIN }}
+  IMAGES_PREFIX: python-echo-server
+  IMAGES_TAG: ${{ github.run_number }}_${{github.sha}}
+  INPUT_DURATION: ${{ github.event.inputs.duration }}
+  INPUT_DESCRIPTION: ${{ github.event.inputs.description }}
+  INPUT_EMAIL: ${{ github.event.inputs.email }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: "Duration (minutes)"
+        required: true
+        type: string
+        default: "30"
+      description:
+        description: "Experiment description (defaults to commit SHA, avoid quotes, please!)"
+        required: false
+        type: string
+        default: ""
+      email:
+        description: "Email notification recipient"
+        required: false
+        type: string
+        default: "your.name@example.com"
+
+jobs:
+  build_publish_launch:
+    name: "Publish images and launch experiment"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup Docker compose
+        uses: docker/setup-compose-action@v2
+
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Login to Antithesis Docker Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: _json_key
+          password: ${{ secrets.ANTITHESIS_REGISTRY_CREDS }}
+
+      - name: Override image name and tag in docker-compose.yaml via environment
+        run: |
+          echo "IMAGES_REPOSITORY_SLASH_PREFIX=${REPOSITORY}/${IMAGES_PREFIX}" >> ./antithesis/.env
+          echo "IMAGES_TAG=${IMAGES_TAG}" >> ./antithesis/.env
+          echo "Docker compose environment:"
+          cat ./antithesis/.env
+
+      - name: Build and publish images
+        env:
+          COMPOSE_PROFILES: config
+        run: |
+          docker compose -f ./antithesis/docker-compose.yaml build
+          docker compose -f ./antithesis/docker-compose.yaml push
+
+      - name: "Launch single experiment"
+        run: ./antithesis/launch_experiment.sh "${INPUT_DURATION}" "${IMAGES_PREFIX}-config:${IMAGES_TAG}" "${INPUT_DESCRIPTION}" "${INPUT_EMAIL}"

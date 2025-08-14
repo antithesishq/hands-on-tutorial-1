@@ -1,0 +1,75 @@
+services:
+  config:
+    image: ${IMAGES_REPOSITORY_SLASH_PREFIX}-config:${IMAGES_TAG}
+    build:
+      context: .
+      dockerfile: Dockerfile.config
+    profiles:
+      - config # Used only to build and push
+
+  echo-server:
+    image: ${IMAGES_REPOSITORY_SLASH_PREFIX}-sut:${IMAGES_TAG}
+    build:
+      context: ..
+      dockerfile: antithesis/Dockerfile.sut
+    command: ["bash", "/app/start_server.sh"]
+    restart: always
+    container_name: echo-server
+    hostname: echo-server
+    mem_limit: 50m
+    environment:
+      - BIND_PORT_NUMBER=4444
+      - BIND_ADDRESS=0.0.0.0
+
+  echo-workload:
+    image: ${IMAGES_REPOSITORY_SLASH_PREFIX}-sut:${IMAGES_TAG}
+    command: ["bash", "/app/start_workload.sh"]
+    restart: no
+    container_name: echo-workload
+    hostname: echo-workload
+    depends_on:
+      echo-server:
+        condition: service_started
+    environment:
+      - SERVER_PORT_NUMBER=4444
+      - SERVER_ADDRESS=echo-server
+      - ALERT_INTERVAL=15
+    mem_limit: 256m
+    dns_opt:
+      - ndots:0
+      - timeout:1
+      - attempts:1
+
+  echo-monitor:
+    image: ${IMAGES_REPOSITORY_SLASH_PREFIX}-sut:${IMAGES_TAG}
+    command: ["bash", "/app/start_monitor.sh"]
+    restart: always
+    container_name: echo-monitor
+    hostname: echo-monitor
+    depends_on:
+      echo-server:
+        condition: service_started
+    environment:
+      - SERVER_PORT_NUMBER=4444
+      - SERVER_ADDRESS=echo-server
+      - STATS_INTERVAL=3
+      - HEALTH_INTERVAL=1
+      - HEALTH_ALERT_INTERVAL=15
+    mem_limit: 256m
+    dns_opt:
+      - ndots:0
+      - timeout:1
+      - attempts:1
+
+  pause-faults:
+    image: ${IMAGES_REPOSITORY_SLASH_PREFIX}-sut:${IMAGES_TAG}
+    command: ["bash", "/app/pause_faults.sh"]
+    restart: no
+    container_name: pause-faults
+    hostname: pause-faults
+    environment:
+      - START_DELAY=5
+      - MIN_ON=5
+      - MAX_ON=10
+      - MIN_OFF=5
+      - MAX_OFF=20

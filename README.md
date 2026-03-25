@@ -152,10 +152,10 @@ This will:
  - Bring up a Docker Compose environment
  - Start the workload, which will keep running until stopped
 
-The setup is declared in `python/antithesis/config/docker-compose.yml`, take a quick look.
+The setup is declared in `python/antithesis/config/docker-compose.yaml`, take a quick look.
 
 The most important services are `workload` and `server`.
-Ignore the additional services for now. We'll come back to them later.
+Each service runs in its own container. Ignore the additional services for now. We'll come back to them later.
 
 Notice how each service references an entry-point script like `start_server.sh` and `start_workload.sh`.
 You can find those in `python/antithesis/`, feel free to take a look.
@@ -188,7 +188,7 @@ Now let's run the same system in Antithesis.
 
 ---
 
-# Part 3 - First experiment
+# Part 3 - First Antithesis test run
 
 Navigate to the GitHub repository `Actions` and select the `Antithesis - Python Echo Server` workflow.
 
@@ -207,18 +207,18 @@ Let's use this time to look at a few things.
 # Intermezzo - Project structure, important files and concepts
 
 
-### Build images and launch experiment
+### Build images and launch test run
 
 Let's look at the GitHub workflow that you just used to launch a test run: `.github/workflows/python_antithesis_experiment.yml`
 
 The important steps are:
 
-1. Build and publish a `config` image. This image tells Antithesis how to run your software. Its most important file is `docker-compose.yml`. The Dockerfile for this image is located in `python/antithesis/Dockerfile`. It consists of an empty image where we copy `docker-compose.yml` along with an `environment` file.
+1. Build and publish a `config` image. This image tells Antithesis how to run your software. Its most important file is `docker-compose.yaml`. The Dockerfile for this image is located in `python/antithesis/Dockerfile`. It consists of an empty image where we copy `docker-compose.yaml` along with an `environment` file.
 
-2. Build and publish a `sut` image ("System Under Test"). This image is based on Ubuntu and includes all the files to run the server, workload, and the other services listed in the docker-compose file.
+2. Build and publish a `sut` image ("System Under Test"). The image for this tutorial is based on Ubuntu and includes all the files to run the server, workload/client, and the other services listed in the docker-compose file.
 The Dockerfile for this image is in `python/Dockerfile`.
 
-3. After images are built and published, we tell Antithesis to launch a new experiment by hitting a specific web endpoint. The request body will look something like this:
+3. After images are built and published, we tell Antithesis to launch a new test run by hitting a specific web endpoint. The request body will look something like this:
 ```
 {
   "params": {
@@ -237,18 +237,16 @@ The script that makes this request can be found in `python/antithesis/scripts/la
 ### SUT image
 See: `python/Dockerfile`
 
-In this case we are building a single image that contains `server`, `workload`, `monitor` and more. But as you can see from `docker-compose.yml` each service uses a different entry-point to play a different role.
+In this case we are building a single image that contains `server`, `workload`, `monitor` and more. But as you can see from `docker-compose.yaml` each service uses a different entry-point to play a different role.
 
-### `python/antithesis/config/docker-compose.yml`
+### `python/antithesis/config/docker-compose.yaml`
 
-For the most part, this is a regular docker-compose file. 
-However, notice the definition of a special `antithesis-net` network. And a corresponding explicit IP address assignment for each service that uses the network.
-
-This is required for Antithesis to intercept network traffic, and mess with it.
+The docker-compose file defines the services, networks, and any related configurations needed.
+You can read more on the Docker best practices for testing in Antithesis [in our docs](https://antithesis.com/docs/best_practices/docker_best_practices/).
 
 ## Additional containers
 
-There are two more services defined in `docker-compose.yml` that we have not addressed yet.
+There are two more services defined in `docker-compose.yaml` that we have not addressed yet.
 
 ### Service: `pause-faults`
 
@@ -293,9 +291,9 @@ These are the images used.
 
 Notice that we just ran **24 hours** of testing in just **30 minutes**!
 
-For supported languages, this would show a graph of "new behaviors" discovered. A metric akin to coverage, but applied to the entire system state-space.
+For languages that have Antithesis coverage instrumentation available (such as Rust, Go, or C++), this section will show a graph of "new behaviors" discovered. Behavior is a metric akin to code coverage, but applied to the entire system state-space.
 
-In this case, there is no graph because Python is currently not supported.
+In this case, there is no graph because Python instrumentation is not yet supported in Antithesis.
 
 ### Findings
 
@@ -311,14 +309,13 @@ Feel free to explore the passing properties.
 When you're ready to hunt for bugs, switch the filter to `Failed` and expand all properties that require attention.
 
 #### `Symbols were uploaded`
-This is expected, as Python is not fully supported.
+This is expected, as Python instrumentation is not yet supported in Antithesis.
 
 #### `Software was instrumented`
-This is expected, as Python is not fully supported.
+This is expected, as Python instrumentation is not yet supported in Antithesis.
 
 #### `Thread pausing was enabled`
-
-This is expected, as Python is not fully supported.
+This is expected, as Python instrumentation is not yet supported in Antithesis. (Thread pausing is a fault enabled by Antithesis instrumentation.)
 
 #### Invalid echo response
 
@@ -326,7 +323,7 @@ Let's start from known Bug #1. This property is telling us that the workload is 
 
 The property we are checking is: **the echo endpoint always sends back the request body when responding successfully**.
 
-In the workload we encode this property as an `unreachable`:
+In the workload we encode this property as an `unreachable` when the response does not match the sent message:
 
 ```python
 # Request was successful
@@ -414,7 +411,7 @@ The good news is that it restarts almost immediately without issues.
 Let's move on to the other properties for now, we'll come back to investigate this later.
 
 #### `Server unavailable for too long (workload requests)`
-This is telling us that the `workload` is unable to get a response from the server for a consecutive period of time (the threshold for this alert is set in `docker-compose.yml`: `ALERT_INTERVAL=20`).
+This is telling us that the `workload` is unable to get a response from the server for a consecutive period of time (the threshold for this alert is set in `docker-compose.yaml`: `ALERT_INTERVAL=20`).
 
 Click on the logs for one of the examples and filter to just `workload`:
 
@@ -441,7 +438,7 @@ This seems like a legitimate problem.
 We'll come back to it later.
 
 #### `Server unavailable for too long (monitor health-check)`
-This is telling us that the `monitor` is unable to get a successful health-check response for a consecutive period of time (the threshold for this alert is set in `docker-compose.yml`: `HEALTH_ALERT_INTERVAL=20`).
+This is telling us that the `monitor` is unable to get a successful health-check response for a consecutive period of time (the threshold for this alert is set in `docker-compose.yaml`: `HEALTH_ALERT_INTERVAL=20`).
 
 Click on the logs for one of the examples and filter to `monitor`:
 
@@ -525,9 +522,9 @@ Let's see what we know so far:
 
 A couple of things to keep in mind:
 
-- The server is single-threaded. So we can rule out any concurrency bugs
-- By default, Antithesis will not kill our containers, that needs to be enabled, but it's off in this case
-- Antithesis is introducing network faults but we limit the maximum duration of these via `pause-faults`
+- The server is single-threaded. So we can rule out any concurrency bugs.
+- By default, Antithesis will not kill our containers, that needs to be enabled, but it's off in this case.
+- Antithesis is introducing network faults but we limit the maximum duration of these via `pause-faults`.
 - The server is (mostly) stateless. The only state is a list of the last N requests received, kept around for debugging in case of an unhandled exception.
 
 With that in mind, let's explore logs to see if we can spot some patterns that can lead us to the bug.
@@ -595,7 +592,7 @@ We said earlier the server is *mostly* stateless. The only state it retains is a
 
 We append to this list in `save_request` and then trim it — or do we?
 
-```
+```python
     def save_request(request_body):
         # Save the last request, useful for debugging in case of crash
         EchoHandler.RECENT_REQUESTS.append(request_body)

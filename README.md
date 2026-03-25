@@ -1,14 +1,14 @@
-## Antithesis Hands-on Tutorial: First Bug Hunt!
+# Antithesis Hands-on Tutorial: First Bug Hunt!
 
 This tutorial will guide you through your first mission to find and neutralize bugs with Antithesis.
 
 This project contains a simple system, fully set up for Antithesis.
 You will:
  - Run the tests, then run the system locally with a workload
- - Launch an Antithesis exploration campaign to search for system misbehavior
- - Investigate bugs using the experiment report
+ - Launch an Antithesis test run to search for system misbehavior
+ - Investigate bugs using the triage report
  - Fix the bugs
- - Launch another Antithesis experiment to verify the bugs have been neutralized.
+ - Launch another Antithesis test run to verify the bugs have been neutralized
 
 Happy bug hunting!
 
@@ -16,11 +16,11 @@ Happy bug hunting!
 
 ## Requirements
 
-This tutorial requires:
+If you want to run any portion of this tutorial locally,  requires:
  - **Python (3.9+)** if you want to run tests locally
  - **Docker** or **Podman** if you want to run the entire system locally (update `Makefile` if using Podman)
 
-Although the code is simple enough that you can understand what it does without actually running it, so these requirements are optional.
+
 
 #### Environment setup
 
@@ -35,10 +35,10 @@ You can sanity-check your Docker (or Podman) setup with `make check`.
 
 SUT stands for 'System Under Test'; it is whatever you are putting under the microscope in Antithesis.
 
-In this case, the SUT consists of a Python HTTP server that implements an "echo" service.
-That is, an endpoint that responds to POST requests by sending back exactly the same bytes as the request body.
+In this case, the SUT consists of a Python HTTP server that implements an "echo" service: 
+an endpoint that responds to POST requests by sending back exactly the same bytes as the request body.
 
-```
+```python
   # Respond to echo requests by sending back the request body verbatim
   on_echo_request(request) {
     request.send_response(200, request.body)
@@ -47,6 +47,7 @@ That is, an endpoint that responds to POST requests by sending back exactly the 
 
 The service exposes two additional endpoints: `/health` (which returns 200/OK), and `/stats` (which exposes server runtime counters).
 
+// TODO workload vs client language here
 A client for this server is also provided; it is part of the SUT and will be put under test.
 
 ![Overview](images/overview.png)
@@ -57,14 +58,15 @@ A client for this server is also provided; it is part of the SUT and will be put
 
 This bug is trivial, but it is planted as a placeholder for the insidious "one in a million" bugs that are very hard to discover, as they require some specific set of rare circumstances to manifest.
 
-```
-on_echo_request(request) {
-  if random(1_000_000) == 0:
-    # One-in-a-million chance to send the wrong response
-    request.send_response(200, "Surprise!")
-  else:
-    request.send_response(200, request.body)
-}
+```python
+def process_echo_request(self, request_body):
+    # Artificial "One in a million" bug. {*}
+    with open("/dev/urandom", "rb") as f:
+        r = int.from_bytes(f.read(4), "big")
+        if r % 1_000_000 == 0:
+            return "Surprise!".encode("utf-8")
+    # Correct response:
+    return request_body
 ```
 
 As we will see, standard testing overlooks this bug!
@@ -98,21 +100,23 @@ In order to test our client & server in Antithesis, all we need to do is:
 
 For this, we use a **workload**. A workload is one or more pieces of code that:
  - Continuously exercises the system under test (client+server in this case)
- - As it runs, checks that good things happen and bad things don't happen (i.e. our liveness and safety properties)
+ - Periodically validates that the system is running correctly and nothing bad has happened
 
-In this case, the workload consists of an infinite loop sending requests and checking for valid responses.
+In this case, the workload consists of an infinite loop sending requests using the client and checking for valid responses from the server.
 
-```
+```python
 while True:
   req = create_random_request()
   resp = client.echo(req)
   if req != resp
     antithesis.alert("Response mismatch!" details: {req, resp})
 ```
+// TODO more about properties here
 
 The primary correctness (safety) property that this validates is that using the echo service via the client always produces a valid response (if the request succeeds).
 
-The workload does a few more things than the stylized version above:
+The workload is slightly more robust than the stylized version above. 
+It also is tolerant to faults and includes a progress check to test for liveness.
 
 ### Fault tolerance
 
@@ -120,7 +124,7 @@ In Antithesis, we are going to test in the presence of faults.
 Some number of requests may fail, and that's ok.
 Errors are counted and printed, but the workload keeps running.
 
-```
+```python
   try:
     resp = client.echo(req)
   catch Exception e:
@@ -131,7 +135,7 @@ Errors are counted and printed, but the workload keeps running.
 Temporary service outages are ok, but we never want our server to become permanently unavailable, i.e. stop responding to *all* future requests.
 For this reason, we keep track of the last successful request, and raise a flag if it's been too long since the last successful operation.
 
-```
+```python
   if now() - last_successful_request > alert_threshold:
     antithesis.alert("Server unavailable for over {alert_threshold} seconds")
 ```
@@ -141,12 +145,12 @@ Every few seconds, the workload prints the count of successful requests and erro
 
 ## Run the system locally
 
-To launch a local version of the Antithesis experiment, consisting of the workload running against the server, execute: `make run`.
+If you want to try out the system (i.e the workload running against the server) locally, execute: `make run` inside the `python` directory.
 
 This will:
  - Build a Docker image (containing both server and workload)
  - Bring up a Docker Compose environment
- - The workload will keep running until stopped
+ - Start the workload, which will keep running until stopped
 
 The setup is declared in `python/antithesis/config/docker-compose.yml`, take a quick look.
 
@@ -188,7 +192,7 @@ Now let's run the same system in Antithesis.
 
 Navigate to the GitHub repository `Actions` and select the `Antithesis - Python Echo Server` workflow.
 
-Manually start an experiment by filling in the fields, and hitting Run.
+Manually start a test run by filling in the fields, and hitting Run.
 
 ![Run Workflow Dialog](images/run-workflow.png)
 
@@ -205,7 +209,7 @@ Let's use this time to look at a few things.
 
 ### Build images and launch experiment
 
-Let's look at the GitHub workflow that you just used to launch an experiment: `.github/workflows/python_antithesis_experiment.yml`
+Let's look at the GitHub workflow that you just used to launch a test run: `.github/workflows/python_antithesis_experiment.yml`
 
 The important steps are:
 

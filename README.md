@@ -40,15 +40,15 @@ an endpoint that responds to POST requests by sending back exactly the same byte
 
 ```python
   # Respond to echo requests by sending back the request body verbatim
-  on_echo_request(request) {
+ def on_echo_request(request) {
     request.send_response(200, request.body)
   }
 ```
 
 The service exposes two additional endpoints: `/health` (which returns 200/OK), and `/stats` (which exposes server runtime counters).
 
-// TODO workload vs client language here
 A client for this server is also provided; it is part of the SUT and will be put under test.
+The image below gives an overview of the SUT. The workload uses the client to generate requests against the server. The monitor periodically reports info from the `/health` and `/stats` endpoints on the server.
 
 ![Overview](images/overview.png)
 
@@ -111,7 +111,7 @@ while True:
   if req != resp
     antithesis.alert("Response mismatch!" details: {req, resp})
 ```
-// TODO more about properties here
+The workload also validates tha t
 
 The primary correctness (safety) property that this validates is that using the echo service via the client always produces a valid response (if the request succeeds).
 

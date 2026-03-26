@@ -104,6 +104,12 @@ For this, we use a **workload**. A workload is one or more pieces of code that:
 
 In this case, the workload consists of an infinite loop sending requests using the client and checking for valid responses from the server.
 
+We can also define properties that should always be true for our system and validate them in the workload:
+1. Using the echo service via the client always produces a valid response if the request succeeds (correctness/safety)
+2. The server should always be able to respond within 20 seconds (liveness)
+
+The basic structure of the workload is something like this:
+
 ```python
 while True:
   req = create_random_request()
@@ -111,12 +117,9 @@ while True:
   if req != resp
     antithesis.alert("Response mismatch!" details: {req, resp})
 ```
-The workload also validates tha t
 
-The primary correctness (safety) property that this validates is that using the echo service via the client always produces a valid response (if the request succeeds).
-
-The workload is slightly more robust than the stylized version above. 
-It also is tolerant to faults and includes a progress check to test for liveness.
+The response mismatch checks the primary correctness (safety) property.
+We can add some additional checks to make the workload fault tolerant and to test for liveness.
 
 ### Fault tolerance
 

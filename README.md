@@ -320,7 +320,7 @@ This is expected, as Python instrumentation is not yet supported in Antithesis.
 #### `Thread pausing was enabled`
 This is expected, as Python instrumentation is not yet supported in Antithesis. (Thread pausing is a fault enabled by Antithesis instrumentation.)
 
-#### Invalid echo response
+#### `Invalid echo response`
 
 Let's start from known Bug #1. This property is telling us that the workload is sometimes receiving an invalid response.
 

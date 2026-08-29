@@ -1,28 +1,306 @@
-# Antithesis Hands-on Tutorial: First Bug Hunt
-
-This tutorial will guide you through your first mission to find and neutralize bugs with Antithesis.
-
-This project contains a simple system, fully set up for Antithesis.
-You will:
- - Run the project's unit-tests, then run the system locally with a workload
- - Launch an Antithesis test run to search for system misbehavior
- - Investigate bugs using the Antithesis [Triage Report](https://antithesis.com/docs/reports/) and [Logs Explorer](https://antithesis.com/docs/logs_explorer/)
- - Fix the bugs
- - Launch another Antithesis test run to verify the bugs have been neutralized
-
-Happy bug hunting!
-
----
-
-## Requirements
-
-Running the local portions of this tutorial requires:
- - **Python (3.9+)** if you want to run tests locally
- - **Docker** or **Podman** if you want to run the entire system locally
 
  **No Docker or Python? No problem**. Just skip the local testing steps.
  
-#### Environment setup
+#### Environment setupimport time
+import threading
+import requests
+from fastapi import FastAPI
+import traceback
+
+# (فرض بر این است که توابع پایه مثل load_markets, pre_filter, fetch_ohlcv, 
+# analyze_dataframe, bottom_top_analysis, now_utc, safe_float و متغیرهای CONFIG, LAST_SCAN, SCAN_LOCK در بخش‌های بالای کد شما تعریف شده‌اند)
+
+
+# =============================================================
+# POSITION CALCULATION (SHORT)
+# =============================================================
+def calculate_position(direction, price, atr, support, resistance):
+    # (کد مربوط به محاسبات پوزیشن که بالاتر فرستادید)
+    if direction == "SHORT":
+        atr_stop = price + 1.5 * atr
+        if resistance > 0 and resistance > price:
+            stop_loss = max(atr_stop, resistance * 1.005)
+        else:
+            stop_loss = atr_stop
+
+        risk = stop_loss - price
+        if risk <= 0:
+            risk = 1.5 * atr
+            stop_loss = price + risk
+
+        tp1 = price - risk * 1
+        tp2 = price - risk * 2
+        tp3 = price - risk * 3
+    else:
+        # حالت پیش‌فرض برای لانگ یا سایر خطوط
+        risk = 1.5 * atr
+        stop_loss = price - risk
+        tp1 = price + risk * 1
+        tp2 = price + risk * 2
+        tp3 = price + risk * 3
+
+    risk_reward_tp3 = 0
+    if risk > 0:
+        risk_reward_tp3 = round(abs(tp3 - price) / risk, 2)
+
+    return {
+        "entry": round(price, 8),
+        "stop_loss": round(stop_loss, 8),
+        "tp1": round(tp1, 8),
+        "tp2": round(tp2, 8),
+        "tp3": round(tp3, 8),
+        "risk_reward_tp3": risk_reward_tp3
+    }
+
+
+# =============================================================
+# TELEGRAM NOTIFICATION
+# =============================================================
+def send_telegram(message: str):
+    token = CONFIG["TELEGRAM_BOT_TOKEN"]
+    chat_id = CONFIG["TELEGRAM_CHAT_ID"]
+
+    if not token or not chat_id:
+        return
+
+    try:
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        payload = {
+            "chat_id": chat_id,
+            "text": message,
+            "parse_mode": "Markdown"
+        }
+        requests.post(url, json=payload, timeout=10)
+    except Exception as e:
+        print("Telegram notification error:", e)
+
+
+# =============================================================
+# FULL SCANNER PIPELINE
+# =============================================================
+def run_scanner():
+    global LAST_SCAN
+
+    with SCAN_LOCK:
+        print("\n" + "=" * 60)
+        print(f"Starting Market Scan at {now_utc()}")
+        print("=" * 60)
+
+        try:
+            load_markets()
+            raw_coins = load_coins()
+            candidates = pre_filter(raw_coins)
+            results = []
+            deep_limit = CONFIG["DEEP_SCAN"]
+            scanned_count = 0
+
+            for coin in candidates:
+                if scanned_count >= deep_limit:
+                    break
+
+                symbol_base = str(coin.get("symbol", "")).upper()
+                futures_symbol = get_symbol(symbol_base)
+
+                if not futures_symbol:
+                    continue
+
+                try:
+                    df = fetch_ohlcv(futures_symbol, TIMEFRAMES["SHORT"])
+                    if len(df) < 210:
+                        continue
+
+                    analysis = analyze_dataframe(df)
+                    bottom_top = bottom_top_analysis(df)
+
+                    long_score = analysis["long_score"]
+                    short_score = analysis["short_score"]
+
+                    direction = None
+                    if long_score >= CONFIG["MIN_SCORE"] and long_score > short_score:
+                        direction = "LONG"
+                    elif short_score >= CONFIG["MIN_SCORE"] and short_score > long_score:
+                        direction = "SHORT"
+
+                    action = "WAIT"
+                    trigger_met = False
+
+                    if direction:
+                        breakout_status = analysis["breakout"]
+                        if CONFIG["REQUIRE_TRIGGER"]:
+                            if direction == "LONG" and breakout_status["long"]:
+                                trigger_met = True
+                            elif direction == "SHORT" and breakout_status["short"]:
+                                trigger_met = True
+                        else:
+                            trigger_met = True
+
+                        if trigger_met:
+                            action = "ENTER"
+
+                    position = calculate_position(
+                        direction or "LONG",
+                        analysis["price"],
+                        analysis["atr"],
+                        analysis["support"],
+                        analysis["resistance"]
+                    )
+
+                    coin_result = {
+                        "symbol": futures_symbol,
+                        "base": symbol_base,
+                        "name": coin.get("name", ""),
+                        "market_cap": safe_float(coin.get("market_cap")),
+                        "volume_24h": safe_float(coin.get("total_volume")),
+                        "price": analysis["price"],
+                        "rsi": analysis["rsi"],
+                        "structure": analysis["structure"],
+                        "bottom_probability": bottom_top["bottom_probability"],
+                        "top_probability": bottom_top["top_probability"],
+                        "long_score": long_score,
+                        "short_score": short_score,
+                        "direction": direction,
+                        "action": action,
+                        "trigger_met": trigger_met,
+                        "reasons": analysis["long_reasons"] if direction == "LONG" else analysis["short_reasons"],
+                        "position": position,
+                        "timestamp": now_utc()
+                    }
+
+                    results.append(coin_result)
+                    scanned_count += 1
+
+                except Exception as e:
+                    print(f"Error scanning {futures_symbol}: {e}")
+                    continue
+
+            results.sort(key=lambda x: max(x["long_score"], x["short_score"]), reverse=True)
+            LAST_SCAN = results
+            print(f"Scan completed successfully. Found {len(results)} analyzed setups.")
+
+            for r in results:
+                if r["action"] == "ENTER":
+                    msg = (
+                        f"🚨 *Crypto AI Signal: {r['base']}*\n"
+                        f"• Direction: `{r['direction']}`\n"
+                        f"• Score: `{max(r['long_score'], r['short_score'])}`\n"
+                        f"• Entry: `{r['position']['entry']}`\n"
+                        f"• Stop Loss: `{r['position']['stop_loss']}`\n"
+                        f"• TP1: `{r['position']['tp1']}` | TP2: `{r['position']['tp2']}` | TP3: `{r['position']['tp3']}`\n"
+                        f"• R:R (TP3): `{r['position']['risk_reward_tp3']}`"
+                    )
+                    send_telegram(msg)
+
+        except Exception as e:
+            print("Scan execution error:", traceback.format_exc())
+
+
+# =============================================================
+# TELEGRAM INTERACTIVE LISTENER (برای پاسخ به دستور /scan در تلگرام)
+# =============================================================
+def telegram_listener_loop():
+    token = CONFIG["TELEGRAM_BOT_TOKEN"]
+    if not token:
+        return
+
+    offset = 0
+    print("Telegram interactive listener started...")
+    
+    while True:
+        try:
+            url = f"https://api.telegram.org/bot{token}/getUpdates?offset={offset}&timeout=30"
+            response = requests.get(url, timeout=35)
+            data = response.json()
+
+            if data.get("ok"):
+                for result in data.get("result", []):
+                    offset = result["update_id"] + 1
+                    message = result.get("message", {})
+                    chat_id = message.get("chat", {}).get("id")
+                    text = message.get("text", "").strip()
+
+                    if not chat_id or not text:
+                        continue
+
+                    if text == "/start":
+                        welcome_msg = "👋 درود، به ربات اسکنر هوشمند بازار خوش آمدید!\nدستور `/scan` را برای اسکن دستی ارسال کنید."
+                        send_custom_telegram(chat_id, welcome_msg)
+
+                    elif text == "/scan":
+                        send_custom_telegram(chat_id, "⏳ درخواست اسکن بازار ثبت شد. لطفاً چند لحظه صبر کنید...")
+                        run_scanner()
+                        if LAST_SCAN:
+                            top_signals = [r for r in LAST_SCAN if r["action"] == "ENTER"]
+                            if top_signals:
+                                send_custom_telegram(chat_id, f"✅ اسکن تمام شد! {len(top_signals)} سیگنال فعال پیدا شد.")
+                            else:
+                                send_custom_telegram(chat_id, "🔍 اسکن انجام شد، اما در حال حاضر ارزی در وضعیت ENTER نیست.")
+                        else:
+                            send_custom_telegram(chat_id, "⚠️ داده‌ای از اسکن موجود نیست.")
+
+        except Exception as e:
+            print("Telegram listener error:", e)
+            time.sleep(5)
+        time.sleep(2)
+
+def send_custom_telegram(chat_id, message):
+    token = CONFIG["TELEGRAM_BOT_TOKEN"]
+    try:
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        payload = {"chat_id": chat_id, "text": message, "parse_mode": "Markdown"}
+        requests.post(url, json=payload, timeout=10)
+    except Exception as e:
+        print("Error sending custom telegram message:", e)
+
+
+# =============================================================
+# BACKGROUND SCANNER THREAD
+# =============================================================
+def background_scanner_loop():
+    while True:
+        try:
+            run_scanner()
+        except Exception as e:
+            print("Background loop error:", e)
+        time.sleep(900)  # هر ۱۵ دقیقه
+
+
+# =============================================================
+# FASTAPI APP
+# =============================================================
+app = FastAPI(title="Crypto AI Market Scanner API", version="3.0")
+
+@app.get("/")
+def root():
+    return {"status": "online", "service": "Crypto AI Market Scanner", "timestamp": now_utc()}
+
+@app.get("/scan")
+def get_scan():
+    with SCAN_LOCK:
+        return {"count": len(LAST_SCAN), "results": LAST_SCAN, "timestamp": now_utc()}
+
+@app.post("/trigger-scan")
+def trigger_scan():
+    threading.Thread(target=run_scanner, daemon=True).start()
+    return {"status": "Scan triggered successfully in background."}
+
+
+# =============================================================
+# MAIN ENTRY POINT (اجرای هم‌زمان بخش‌ها)
+# =============================================================
+if __name__ == "__main__":
+    import uvicorn
+
+    # ۱. استارت ترد اسکنر پس‌زمینه (خودکار هر ۱۵ دقیقه)
+    print("Starting background scanner thread...")
+    threading.Thread(target=background_scanner_loop, daemon=True).start()
+
+    # ۲. استارت ترد شنود تلگرام (برای پاسخ به دستور /scan در تلگرام)
+    print("Starting Telegram listener thread...")
+    threading.Thread(target=telegram_listener_loop, daemon=True).start()
+
+    # ۳. استارت سرور FastAPI
+    print(f"Starting FastAPI server on {CONFIG['API_HOST']}:{CONFIG['API_PORT']}...")
+    uvicorn.run(app, host=CONFIG["API_HOST"], port=CONFIG["API_PORT"])
 
 The python project has a few dependencies (such as the `requests` library).
 From the `python` directory, run `make venv_setup` and follow the instructions to create and activate a local virtual environment. Run `make venv_check` to verify it.

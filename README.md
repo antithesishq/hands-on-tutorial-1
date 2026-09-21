@@ -306,9 +306,7 @@ Notice that we just ran **24 hours** of testing in just **30 minutes**!
 
 ![Wall clock vs simulation time](.readme/test-hours.png)
 
-For languages that have Antithesis coverage instrumentation available (such as Rust, Go, or C++), this section will show a graph of "new behaviors" discovered. Behavior is a metric akin to code coverage, but applied to the entire system state-space.
-
-In this case, there is no graph because Python instrumentation is not yet supported in Antithesis.
+For languages that have Antithesis coverage instrumentation available, this section shows a graph of "new behaviors" discovered. Behavior is a metric akin to code coverage, but applied to the entire system state-space.
 
 ### Findings
 
@@ -322,15 +320,6 @@ Ignore this for now.
 Feel free to explore the passing properties.
 
 When you're ready to hunt for bugs, switch the filter to `Failed` and expand all properties that require attention.
-
-#### `Symbols were uploaded`
-This is expected, as Python instrumentation is not yet supported in Antithesis.
-
-#### `Software was instrumented`
-This is expected, as Python instrumentation is not yet supported in Antithesis.
-
-#### `Thread pausing was enabled`
-This is expected, as Python instrumentation is not yet supported in Antithesis. (Thread pausing is a fault enabled by Antithesis instrumentation.)
 
 #### `Invalid echo response`
 
